@@ -334,7 +334,7 @@ class LinkedInPublisher:
         Fetch comments on a LinkedIn post.
 
         Args:
-            post_urn: The LinkedIn post URN / ID
+            post_urn: The LinkedIn post URN (e.g. urn:li:share:xxx or urn:li:ugcPost:xxx)
 
         Returns:
             List of dicts with keys: id, text, author
@@ -348,13 +348,15 @@ class LinkedInPublisher:
                 logger.error("LinkedIn access token not configured")
                 return []
 
-            # Encode the post URN for use in URL
             from urllib.parse import quote
-            encoded_urn = quote(f"urn:li:ugcPost:{post_urn}", safe="")
+            # Use the URN as-is — do NOT double-wrap it
+            encoded_urn = quote(post_urn, safe="")
 
+            # LinkedIn versioned REST API (requires LinkedIn-Version header)
             response = self.session.get(
-                f"{self.base_url}/socialActions/{encoded_urn}/comments",
+                f"https://api.linkedin.com/rest/socialActions/{encoded_urn}/comments",
                 params={"count": 50},
+                headers={"LinkedIn-Version": "202304"},
                 timeout=30,
             )
 
@@ -375,6 +377,13 @@ class LinkedInPublisher:
                         })
                 logger.info(f"Fetched {len(comments)} comments for post {post_urn}")
                 return comments
+            elif response.status_code == 403:
+                logger.warning(
+                    "LinkedIn API returned 403 for comments — the access token may lack "
+                    "r_organization_social or Marketing Developer Platform permissions. "
+                    "Comment auto-reply will be skipped until permissions are granted."
+                )
+                return []
             else:
                 logger.warning(
                     f"Failed to fetch comments for {post_urn}: "
@@ -391,7 +400,7 @@ class LinkedInPublisher:
         Post a reply to an existing comment on a LinkedIn post.
 
         Args:
-            post_urn: The LinkedIn post URN / ID
+            post_urn: The LinkedIn post URN
             comment_id: The comment ID to reply to
             reply_text: Text of the reply
 
@@ -411,7 +420,7 @@ class LinkedInPublisher:
                 return False
 
             from urllib.parse import quote
-            encoded_urn = quote(f"urn:li:ugcPost:{post_urn}", safe="")
+            encoded_urn = quote(post_urn, safe="")
 
             payload = {
                 "actor": f"urn:li:person:{self.person_id}",
@@ -420,8 +429,9 @@ class LinkedInPublisher:
             }
 
             response = self.session.post(
-                f"{self.base_url}/socialActions/{encoded_urn}/comments",
+                f"https://api.linkedin.com/rest/socialActions/{encoded_urn}/comments",
                 json=payload,
+                headers={"LinkedIn-Version": "202304"},
                 timeout=30,
             )
 
