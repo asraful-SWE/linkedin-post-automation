@@ -28,7 +28,8 @@ class OpenAIProvider:
         self.default_max_tokens = 500
     
     def generate_completion(self, prompt: str, temperature: float = None, 
-                          max_tokens: int = None, model: str = None) -> str:
+                          max_tokens: int = None, model: str = None,
+                          system_message: str = None) -> str:
         """
         Generate completion using OpenAI API
         
@@ -37,23 +38,28 @@ class OpenAIProvider:
             temperature: Creativity level (0.0 to 1.0)
             max_tokens: Maximum tokens in response
             model: Model to use
+            system_message: Custom system message (optional)
             
         Returns:
             Generated text completion
         """
         try:
+            sys_msg = system_message or "You are a Bengali software developer writing authentic LinkedIn posts."
+            
             response = self.client.chat.completions.create(
                 model=model or self.default_model,
                 messages=[
                     {
                         "role": "system", 
-                        "content": "You are a Bengali software developer writing authentic LinkedIn posts."
+                        "content": sys_msg
                     },
                     {"role": "user", "content": prompt}
                 ],
                 temperature=temperature or self.default_temperature,
                 max_tokens=max_tokens or self.default_max_tokens,
-                top_p=0.9
+                top_p=0.92,
+                frequency_penalty=0.3,
+                presence_penalty=0.2,
             )
             
             content = response.choices[0].message.content.strip()

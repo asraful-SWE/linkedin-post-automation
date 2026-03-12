@@ -7,6 +7,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from database.models import DatabaseManager, TopicPerformance
+from services.topics import ALL_TOPICS, TOPIC_CATEGORIES, get_random_topic, get_topic_count
 
 
 logger = logging.getLogger(__name__)
@@ -15,27 +16,14 @@ logger = logging.getLogger(__name__)
 class TopicEngine:
     """
     Topic selection system for Bengali LinkedIn posts that:
-    1. Rotates through specified topics
+    1. Selects from 1000+ diverse topics
     2. Learns from engagement performance
     3. Avoids recent repetition
-    4. Prioritizes high-performing topics
+    4. Prioritizes high-performing topic categories
     """
     
-    # Core topics for developer-focused Bengali LinkedIn posts
-    TOPICS = [
-        "Artificial Intelligence",
-        "Software Engineering", 
-        "Web Development",
-        "Programming",
-        "Backend Development",
-        "DevOps",
-        "Debugging Lessons",
-        "Developer Productivity",
-        "Coding Mistakes",
-        "Developer Career Advice",
-        "System Design",
-        "Open Source"
-    ]
+    # Use the massive topic list from topics.py
+    TOPICS = ALL_TOPICS
     
     def __init__(self, db_manager: DatabaseManager):
         self.db = db_manager
@@ -265,10 +253,12 @@ class TopicEngine:
             recent_topics = self.db.get_recent_topics(days=7)
             
             insights = {
+                "total_available_topics": len(self.TOPICS),
+                "total_unique_topics": get_topic_count(),
+                "total_categories": len(TOPIC_CATEGORIES),
                 "total_topics_used": len(performance_data),
                 "topics_used_recently": len(recent_topics),
                 "best_performing_topics": [],
-                "unused_topics": [],
                 "topic_weights": self.topic_weights.copy()
             }
             
@@ -284,9 +274,9 @@ class TopicEngine:
                     for p in sorted_performance[:5]
                 ]
             
-            # Unused topics
+            # Unused topics count (not listing all - too many)
             used_topics = {p.topic for p in performance_data}
-            insights["unused_topics"] = [topic for topic in self.TOPICS if topic not in used_topics]
+            insights["unused_topics_count"] = len([topic for topic in self.TOPICS if topic not in used_topics])
             
             return insights
             
