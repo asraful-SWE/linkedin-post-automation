@@ -5,7 +5,7 @@ LinkedIn Publisher - Handles TEXT-ONLY posting to LinkedIn via API
 import os
 import requests
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime
 import json
 
