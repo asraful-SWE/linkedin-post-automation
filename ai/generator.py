@@ -174,12 +174,24 @@ LONG POST (300-500 words):
 এখন এই topic নিয়ে একটা LinkedIn post লেখো:
 """
 
-# Load OpenAI key from environment variable
-OPENAI_KEY = os.getenv("OPENAI_KEY", "")
-if not OPENAI_KEY:
-    raise ValueError("OPENAI_KEY environment variable is not set!")
+# Load OpenAI key from environment variable (lazy - don't crash on import)
+OPENAI_KEY = os.getenv("OPENAI_KEY", "") or os.getenv("OPENAI_API_KEY", "")
+if OPENAI_KEY:
+    client = OpenAI(api_key=OPENAI_KEY)
+else:
+    client = None
+    logger.warning("OPENAI_KEY not set - generate_post() will fail until key is configured")
 
-client = OpenAI(api_key=OPENAI_KEY)
+
+def _get_client():
+    """Get OpenAI client, raising error only when actually needed"""
+    global client, OPENAI_KEY
+    if client is None:
+        OPENAI_KEY = os.getenv("OPENAI_KEY", "") or os.getenv("OPENAI_API_KEY", "")
+        if not OPENAI_KEY:
+            raise ValueError("OPENAI_KEY environment variable is not set!")
+        client = OpenAI(api_key=OPENAI_KEY)
+    return client
 
 
 def generate_post() -> str:
@@ -209,7 +221,7 @@ def generate_post() -> str:
     # Vary temperature for more natural output
     temperature = random.uniform(0.85, 0.98)
     
-    response = client.chat.completions.create(
+    response = _get_client().chat.completions.create(
         model="gpt-4o-mini",
         messages=[
             {
