@@ -19,6 +19,7 @@ from services.topic_engine import TopicEngine
 from services.post_generator import PostGenerator
 from services.engagement_engine import EngagementEngine
 from services.linkedin_publisher import LinkedInPublisher
+from services.comment_responder import CommentResponder
 from utils.logger import setup_logging
 
 
@@ -302,6 +303,56 @@ async def get_engagement_analytics():
     except Exception as e:
         logger.error(f"Engagement analytics failed: {e}")
         raise HTTPException(status_code=500, detail="Unable to get engagement analytics")
+
+
+# Comment responder endpoints
+@app.post("/comments/check", response_model=Dict[str, Any])
+async def check_and_reply_comments(background_tasks: BackgroundTasks):
+    """Manually trigger comment checking and AI auto-reply"""
+    try:
+        if not db_manager:
+            raise HTTPException(status_code=500, detail="Database not initialized")
+
+        def run_check():
+            responder = CommentResponder(db_manager)
+            return responder.process_new_comments()
+
+        background_tasks.add_task(run_check)
+        return {"message": "Comment check started in background"}
+
+    except Exception as e:
+        logger.error(f"Comment check trigger failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to start comment check")
+
+
+@app.get("/comments/status", response_model=Dict[str, Any])
+async def get_comment_reply_status():
+    """Get stats about auto-replied comments"""
+    try:
+        if not db_manager:
+            raise HTTPException(status_code=500, detail="Database not initialized")
+
+        import sqlite3
+        with sqlite3.connect(db_manager.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM replied_comments")
+            total_replied = cursor.fetchone()[0]
+            cursor.execute(
+                "SELECT COUNT(*) FROM replied_comments "
+                "WHERE replied_at > datetime('now', '-1 day')"
+            )
+            replied_today = cursor.fetchone()[0]
+
+        return {
+            "total_comments_replied": total_replied,
+            "replied_in_last_24h": replied_today,
+            "auto_reply_enabled": True,
+            "check_interval_hours": 2,
+        }
+
+    except Exception as e:
+        logger.error(f"Comment status failed: {e}")
+        raise HTTPException(status_code=500, detail="Unable to get comment status")
 
 
 # Utility functions

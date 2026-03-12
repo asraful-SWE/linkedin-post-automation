@@ -18,6 +18,7 @@ from services.topic_engine import TopicEngine
 from services.post_generator import PostGenerator
 from services.linkedin_publisher import LinkedInPublisher
 from services.engagement_engine import EngagementEngine
+from services.comment_responder import CommentResponder
 
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ class PostingScheduler:
         self.post_generator = PostGenerator()
         self.linkedin_publisher = LinkedInPublisher()
         self.engagement_engine = EngagementEngine(db_manager)
+        self.comment_responder = CommentResponder(db_manager)
         
         # Configuration
         self.timezone = pytz.timezone(os.getenv("TIMEZONE", "Asia/Dhaka"))
@@ -171,6 +173,14 @@ class PostingScheduler:
     def _schedule_maintenance_tasks(self):
         """Schedule maintenance and optimization tasks"""
         try:
+            # Comment reply check — every 2 hours
+            self.scheduler.add_job(
+                self._check_and_reply_comments,
+                IntervalTrigger(hours=2),
+                id="comment_reply_check",
+                replace_existing=True
+            )
+
             # Daily analytics update (late night)
             self.scheduler.add_job(
                 self._update_analytics_job,
@@ -320,6 +330,19 @@ class PostingScheduler:
             
         except Exception as e:
             logger.error(f"Monthly cleanup failed: {e}")
+
+    async def _check_and_reply_comments(self):
+        """Check for new comments on our posts and reply with AI"""
+        try:
+            logger.info("Starting comment reply check")
+            result = self.comment_responder.process_new_comments()
+            logger.info(
+                f"Comment check done — checked: {result['checked']}, "
+                f"replied: {result['replied']}, skipped: {result['skipped']}, "
+                f"errors: {result['errors']}"
+            )
+        except Exception as e:
+            logger.error(f"Comment reply check failed: {e}")
     
     def manual_post(self, topic: Optional[str] = None) -> Dict[str, Any]:
         """Manually trigger a text-only post (for testing)"""

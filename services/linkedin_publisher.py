@@ -324,3 +324,117 @@ class LinkedInPublisher:
             "api_accessible": self.validate_credentials() if self.access_token else False,
             "last_check": datetime.now().isoformat()
         }
+
+    # ------------------------------------------------------------------
+    # Comment APIs
+    # ------------------------------------------------------------------
+
+    def get_post_comments(self, post_urn: str) -> List[Dict[str, Any]]:
+        """
+        Fetch comments on a LinkedIn post.
+
+        Args:
+            post_urn: The LinkedIn post URN / ID
+
+        Returns:
+            List of dicts with keys: id, text, author
+        """
+        try:
+            if self.mock_mode:
+                logger.info(f"MOCK MODE: Simulating get_post_comments for {post_urn}")
+                return []
+
+            if not self.access_token:
+                logger.error("LinkedIn access token not configured")
+                return []
+
+            # Encode the post URN for use in URL
+            from urllib.parse import quote
+            encoded_urn = quote(f"urn:li:ugcPost:{post_urn}", safe="")
+
+            response = self.session.get(
+                f"{self.base_url}/socialActions/{encoded_urn}/comments",
+                params={"count": 50},
+                timeout=30,
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                elements = data.get("elements", [])
+                comments = []
+                for elem in elements:
+                    comment_id = elem.get("id", "")
+                    message = elem.get("message", {})
+                    text = message.get("text", "")
+                    author = elem.get("actor", "")
+                    if comment_id and text:
+                        comments.append({
+                            "id": comment_id,
+                            "text": text,
+                            "author": author,
+                        })
+                logger.info(f"Fetched {len(comments)} comments for post {post_urn}")
+                return comments
+            else:
+                logger.warning(
+                    f"Failed to fetch comments for {post_urn}: "
+                    f"{response.status_code} - {response.text[:200]}"
+                )
+                return []
+
+        except Exception as e:
+            logger.error(f"get_post_comments failed: {e}")
+            return []
+
+    def post_comment_reply(self, post_urn: str, comment_id: str, reply_text: str) -> bool:
+        """
+        Post a reply to an existing comment on a LinkedIn post.
+
+        Args:
+            post_urn: The LinkedIn post URN / ID
+            comment_id: The comment ID to reply to
+            reply_text: Text of the reply
+
+        Returns:
+            True if the reply was posted successfully, False otherwise
+        """
+        try:
+            if self.mock_mode:
+                logger.info(
+                    f"MOCK MODE: Simulated reply to comment {comment_id} "
+                    f"on post {post_urn}: {reply_text[:60]}..."
+                )
+                return True
+
+            if not self.access_token or not self.person_id:
+                logger.error("LinkedIn credentials not configured")
+                return False
+
+            from urllib.parse import quote
+            encoded_urn = quote(f"urn:li:ugcPost:{post_urn}", safe="")
+
+            payload = {
+                "actor": f"urn:li:person:{self.person_id}",
+                "message": {"text": reply_text},
+                "parentComment": comment_id,
+            }
+
+            response = self.session.post(
+                f"{self.base_url}/socialActions/{encoded_urn}/comments",
+                json=payload,
+                timeout=30,
+            )
+
+            if response.status_code in (200, 201):
+                logger.info(f"Posted reply to comment {comment_id}")
+                return True
+            else:
+                logger.error(
+                    f"Failed to post reply to comment {comment_id}: "
+                    f"{response.status_code} - {response.text[:200]}"
+                )
+                return False
+
+        except Exception as e:
+            logger.error(f"post_comment_reply failed: {e}")
+            return False

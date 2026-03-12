@@ -99,6 +99,17 @@ class DatabaseManager:
                         last_used TIMESTAMP
                     )
                 """)
+
+                # Replied comments tracking (to avoid double-replying)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS replied_comments (
+                        comment_id TEXT PRIMARY KEY,
+                        post_id TEXT NOT NULL,
+                        comment_text TEXT,
+                        reply_text TEXT,
+                        replied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
                 
                 conn.commit()
                 logger.info("Database initialized successfully")
@@ -270,3 +281,53 @@ class DatabaseManager:
                 
         except Exception as e:
             logger.error(f"Failed to cleanup old data: {e}")
+
+    def get_tracked_posts(self) -> List[Dict[str, Any]]:
+        """Return all posts that have a LinkedIn post ID (for comment checking)"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id, linkedin_post_id, topic, content
+                    FROM posts
+                    WHERE linkedin_post_id IS NOT NULL
+                    ORDER BY created_at DESC
+                    LIMIT 50
+                """)
+                return [
+                    {"db_id": row[0], "linkedin_post_id": row[1],
+                     "topic": row[2], "content": row[3]}
+                    for row in cursor.fetchall()
+                ]
+        except Exception as e:
+            logger.error(f"Failed to get tracked posts: {e}")
+            return []
+
+    def is_comment_replied(self, comment_id: str) -> bool:
+        """Check if we have already replied to this comment"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT 1 FROM replied_comments WHERE comment_id = ?",
+                    (comment_id,)
+                )
+                return cursor.fetchone() is not None
+        except Exception as e:
+            logger.error(f"Failed to check reply status: {e}")
+            return False
+
+    def mark_comment_replied(self, comment_id: str, post_id: str,
+                              comment_text: str, reply_text: str):
+        """Record that we have replied to a comment"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT OR IGNORE INTO replied_comments
+                        (comment_id, post_id, comment_text, reply_text)
+                    VALUES (?, ?, ?, ?)
+                """, (comment_id, post_id, comment_text, reply_text))
+                conn.commit()
+        except Exception as e:
+            logger.error(f"Failed to mark comment as replied: {e}")
