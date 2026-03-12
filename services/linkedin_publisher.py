@@ -356,7 +356,7 @@ class LinkedInPublisher:
             response = self.session.get(
                 f"https://api.linkedin.com/rest/socialActions/{encoded_urn}/comments",
                 params={"count": 50},
-                headers={"LinkedIn-Version": "202304"},
+                headers={"LinkedIn-Version": "202501"},
                 timeout=30,
             )
 
@@ -431,7 +431,7 @@ class LinkedInPublisher:
             response = self.session.post(
                 f"https://api.linkedin.com/rest/socialActions/{encoded_urn}/comments",
                 json=payload,
-                headers={"LinkedIn-Version": "202304"},
+                headers={"LinkedIn-Version": "202501"},
                 timeout=30,
             )
 
