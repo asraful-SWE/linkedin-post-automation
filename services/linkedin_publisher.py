@@ -7,6 +7,7 @@ import requests
 import logging
 from typing import Optional, Dict, Any, List
 from datetime import datetime
+import io
 
 
 logger = logging.getLogger(__name__)
@@ -157,8 +158,93 @@ class LinkedInPublisher:
             logger.error(f"publish_to_linkedin failed: {e}")
             return {"success": False, "error": str(e)}
 
+    def _register_image_asset(self, image_url: str) -> Optional[str]:
+        """
+        Register an image asset with LinkedIn and get back its URN.
+        
+        Args:
+            image_url: URL of the image to upload
+            
+        Returns:
+            Asset URN if successful, None otherwise
+        """
+        try:
+            if self.mock_mode:
+                return f"urn:li:digitalmediaAsset:mock_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            
+            if not self.access_token or not self.person_id:
+                logger.error("LinkedIn credentials not properly configured")
+                return None
+            
+            # Step 1: Register the upload with LinkedIn
+            register_upload_data = {
+                "registerUploadRequest": {
+                    "recipes": ["urn:li:digitalmediaRecipe:feedShare-image"],
+                    "owner": f"urn:li:person:{self.person_id}",
+                    "serviceRelationships": [
+                        {
+                            "relationshipType": "OWNER",
+                            "identifier": "urn:li:userGeneratedContent"
+                        }
+                    ]
+                }
+            }
+            
+            register_response = self.session.post(
+                f"{self.base_url}/assets?action=registerUpload",
+                json=register_upload_data,
+                timeout=30
+            )
+            
+            if register_response.status_code != 200:
+                logger.error(f"Failed to register upload: {register_response.status_code} - {register_response.text}")
+                return None
+            
+            register_data = register_response.json()
+            upload_url = register_data.get("value", {}).get("uploadMechanism", {}).get("com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest", {}).get("uploadUrl")
+            asset_urn = register_data.get("value", {}).get("asset")
+            
+            if not upload_url or not asset_urn:
+                logger.error("Failed to get upload URL or asset URN from registration response")
+                return None
+            
+            # Step 2: Download the image from the provided URL
+            try:
+                image_response = requests.get(image_url, timeout=30)
+                if image_response.status_code != 200:
+                    logger.error(f"Failed to download image from {image_url}: {image_response.status_code}")
+                    return None
+                image_data = image_response.content
+            except Exception as e:
+                logger.error(f"Failed to download image: {e}")
+                return None
+            
+            # Step 3: Upload the image to the provided upload URL
+            upload_headers = {
+                'Authorization': f'Bearer {self.access_token}',
+                'X-Restli-Protocol-Version': '2.0.0'
+            }
+            
+            upload_response = requests.put(
+                upload_url,
+                data=image_data,
+                headers=upload_headers,
+                timeout=30
+            )
+            
+            if upload_response.status_code not in [200, 201]:
+                logger.error(f"Failed to upload image: {upload_response.status_code} - {upload_response.text}")
+                return None
+            
+            logger.info(f"Successfully registered image asset: {asset_urn}")
+            return asset_urn
+        
+        except Exception as e:
+            logger.error(f"Image asset registration failed: {e}")
+            return None
+
     def _publish_image_post(self, post_text: str, image_url: str) -> Optional[str]:
-        """Publish a post with image URL as media."""
+        """Publish a post with image using registered asset URN."""
         try:
             if self.mock_mode:
                 fake_post_id = f"mock_image_post_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -169,6 +255,13 @@ class LinkedInPublisher:
                 logger.error("LinkedIn credentials not properly configured")
                 return None
 
+            # Step 1: Register and upload the image to get its URN
+            asset_urn = self._register_image_asset(image_url)
+            if not asset_urn:
+                logger.error("Failed to register image asset")
+                return None
+
+            # Step 2: Publish post with the registered asset
             post_data = {
                 "author": f"urn:li:person:{self.person_id}",
                 "lifecycleState": "PUBLISHED",
@@ -179,9 +272,7 @@ class LinkedInPublisher:
                         "media": [
                             {
                                 "status": "READY",
-                                "originalUrl": image_url,
-                                "description": {"text": "Post image"},
-                                "title": {"text": "Image"},
+                                "media": asset_urn,
                             }
                         ],
                     }
@@ -216,6 +307,52 @@ class LinkedInPublisher:
         except Exception as e:
             logger.error(f"Image post publishing failed: {e}")
             return None
+    
+    def publish_post(self, content: str) -> Optional[str]:
+        """
+        Main method to publish a text-only post
+        
+        Args:
+            content: Post content text
+            
+        Returns:
+            LinkedIn post ID if successful, None otherwise
+        """
+        try:
+            if not self.validate_credentials():
+                logger.error("Cannot publish - LinkedIn credentials invalid")
+                return None
+            
+            logger.info("Publishing text-only post")
+            return self.publish_text_post(content)
+                
+        except Exception as e:
+            logger.error(f"Post publishing failed: {e}")
+            return None
+
+    def publish_to_linkedin(self, post_text: str, image_url: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Publish to LinkedIn with optional image URL.
+
+        If image_url exists, attempts media publishing flow.
+        Otherwise publishes a text-only post.
+        """
+        try:
+            if not self.validate_credentials():
+                return {"success": False, "error": "LinkedIn credentials invalid"}
+
+            if image_url:
+                linkedin_post_id = self._publish_image_post(post_text=post_text, image_url=image_url)
+            else:
+                linkedin_post_id = self.publish_text_post(post_text)
+
+            if linkedin_post_id:
+                return {"success": True, "linkedin_post_id": linkedin_post_id}
+
+            return {"success": False, "error": "LinkedIn publish failed"}
+        except Exception as e:
+            logger.error(f"publish_to_linkedin failed: {e}")
+            return {"success": False, "error": str(e)}
     
     def get_post_analytics(self, post_id: str) -> Optional[Dict[str, Any]]:
         """
