@@ -336,6 +336,47 @@ class DatabaseManager:
             logger.error(f"Failed to get tracked posts: {e}")
             return []
 
+    def list_posts(self, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """List posts with optional status filter for dashboard UI"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+
+                if status:
+                    cursor.execute(
+                        """
+                        SELECT id, topic, content, status, image_url, created_at, linkedin_post_id
+                        FROM posts
+                        WHERE status = ?
+                        ORDER BY created_at DESC
+                        """,
+                        (status,),
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        SELECT id, topic, content, status, image_url, created_at, linkedin_post_id
+                        FROM posts
+                        ORDER BY created_at DESC
+                        """
+                    )
+
+                return [
+                    {
+                        "id": row[0],
+                        "topic": row[1],
+                        "content": row[2],
+                        "status": row[3],
+                        "image_url": row[4],
+                        "created_at": row[5],
+                        "linkedin_post_id": row[6],
+                    }
+                    for row in cursor.fetchall()
+                ]
+        except Exception as e:
+            logger.error(f"Failed to list posts: {e}")
+            return []
+
     def get_post_by_id(self, post_id: int) -> Optional[Dict[str, Any]]:
         """Fetch a single post by ID"""
         try:

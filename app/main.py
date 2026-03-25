@@ -159,6 +159,25 @@ async def get_dashboard():
         raise HTTPException(status_code=500, detail="Dashboard unavailable")
 
 
+@app.get("/posts", response_model=List[Dict[str, Any]])
+async def list_posts(status: Optional[str] = None):
+    """List posts for dashboard with optional status filter"""
+    try:
+        if not db_manager:
+            raise HTTPException(status_code=500, detail="Database not initialized")
+
+        allowed_statuses = {"pending", "approved", "published", "rejected"}
+        if status and status not in allowed_statuses:
+            raise HTTPException(status_code=400, detail="Invalid status filter")
+
+        return db_manager.list_posts(status=status)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"List posts failed: {e}")
+        raise HTTPException(status_code=500, detail="Unable to list posts")
+
+
 # Manual generation endpoint
 @app.post("/generate-post", response_model=PostResponse)
 async def generate_post_for_approval(request: PostRequest):
