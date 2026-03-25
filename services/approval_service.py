@@ -34,11 +34,8 @@ class ApprovalService:
         logger.info(f"post generated | post_id={post_id} | status=pending | topic={topic}")
         return {"post_id": post_id, "token": token}
 
-    def approve_post(self, post_id: int, token: str, image_url: Optional[str] = None) -> Dict[str, Any]:
-        """Approve + publish post after token validation"""
-        if not self.db.validate_approval_token(post_id=post_id, token=token, secret_key=self.secret):
-            return {"success": False, "error": "Invalid or expired token"}
-
+    def _publish_approved_post(self, post_id: int, image_url: Optional[str] = None) -> Dict[str, Any]:
+        """Shared publish flow after a post is marked approved."""
         post = self.db.get_post_by_id(post_id)
         if not post:
             return {"success": False, "error": "Post not found"}
@@ -52,7 +49,10 @@ class ApprovalService:
         self.db.update_post_status(post_id, "approved")
         logger.info(f"post approved | post_id={post_id}")
 
-        publish_result = self.publisher.publish_to_linkedin(post_text=post["content"], image_url=image_url or post.get("image_url"))
+        publish_result = self.publisher.publish_to_linkedin(
+            post_text=post["content"],
+            image_url=image_url or post.get("image_url"),
+        )
         if not publish_result.get("success"):
             return {"success": False, "error": publish_result.get("error", "Publish failed")}
 
@@ -61,7 +61,6 @@ class ApprovalService:
             self.db.set_linkedin_post_id(post_id, linkedin_post_id)
 
         self.db.update_post_status(post_id, "published")
-        self.db.mark_approval_token_used(post_id)
         logger.info(f"post published | post_id={post_id} | linkedin_post_id={linkedin_post_id}")
 
         return {
@@ -71,11 +70,32 @@ class ApprovalService:
             "linkedin_post_id": linkedin_post_id,
         }
 
+    def approve_post(self, post_id: int, token: str, image_url: Optional[str] = None) -> Dict[str, Any]:
+        """Approve + publish post after token validation"""
+        if not self.db.validate_approval_token(post_id=post_id, token=token, secret_key=self.secret):
+            return {"success": False, "error": "Invalid or expired token"}
+
+        result = self._publish_approved_post(post_id=post_id, image_url=image_url)
+        if result.get("success"):
+            self.db.mark_approval_token_used(post_id)
+        return result
+
+    def approve_post_without_token(self, post_id: int, image_url: Optional[str] = None) -> Dict[str, Any]:
+        """Dashboard approval flow (token-less) for internal UI operations."""
+        return self._publish_approved_post(post_id=post_id, image_url=image_url)
+
     def reject_post(self, post_id: int, token: str) -> Dict[str, Any]:
         """Reject post after token validation"""
         if not self.db.validate_approval_token(post_id=post_id, token=token, secret_key=self.secret):
             return {"success": False, "error": "Invalid or expired token"}
 
+        result = self.reject_post_without_token(post_id)
+        if result.get("success"):
+            self.db.mark_approval_token_used(post_id)
+        return result
+
+    def reject_post_without_token(self, post_id: int) -> Dict[str, Any]:
+        """Dashboard reject flow (token-less) for internal UI operations."""
         post = self.db.get_post_by_id(post_id)
         if not post:
             return {"success": False, "error": "Post not found"}
@@ -83,7 +103,9 @@ class ApprovalService:
         if post["status"] == "published":
             return {"success": False, "error": "Post already published"}
 
+        if post["status"] == "rejected":
+            return {"success": False, "error": "Post already rejected"}
+
         self.db.update_post_status(post_id, "rejected")
-        self.db.mark_approval_token_used(post_id)
         logger.info(f"post rejected | post_id={post_id}")
         return {"success": True, "post_id": post_id, "status": "rejected"}

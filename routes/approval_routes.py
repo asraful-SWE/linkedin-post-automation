@@ -46,9 +46,12 @@ def _save_uploaded_image(file: UploadFile) -> Optional[str]:
 
 
 @router.get("/approve-post/{post_id}")
-async def approve_post(post_id: int, token: str, request: Request, image_url: Optional[str] = None):
+async def approve_post(post_id: int, request: Request, token: Optional[str] = None, image_url: Optional[str] = None):
     service = _get_approval_service(request)
-    result = service.approve_post(post_id=post_id, token=token, image_url=image_url)
+    if token:
+        result = service.approve_post(post_id=post_id, token=token, image_url=image_url)
+    else:
+        result = service.approve_post_without_token(post_id=post_id, image_url=image_url)
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("error", "Approval failed"))
     return JSONResponse(result)
@@ -58,7 +61,7 @@ async def approve_post(post_id: int, token: str, request: Request, image_url: Op
 async def approve_post_with_form(
     post_id: int,
     request: Request,
-    token: str = Form(...),
+    token: Optional[str] = Form(None),
     image_url: Optional[str] = Form(None),
     image_file: Optional[UploadFile] = File(None),
 ):
@@ -70,7 +73,10 @@ async def approve_post_with_form(
         if uploaded_url:
             resolved_image_url = uploaded_url
 
-    result = service.approve_post(post_id=post_id, token=token, image_url=resolved_image_url)
+    if token:
+        result = service.approve_post(post_id=post_id, token=token, image_url=resolved_image_url)
+    else:
+        result = service.approve_post_without_token(post_id=post_id, image_url=resolved_image_url)
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("error", "Approval failed"))
 
@@ -81,9 +87,12 @@ async def approve_post_with_form(
 
 
 @router.get("/reject-post/{post_id}")
-async def reject_post(post_id: int, token: str, request: Request):
+async def reject_post(post_id: int, request: Request, token: Optional[str] = None):
     service = _get_approval_service(request)
-    result = service.reject_post(post_id=post_id, token=token)
+    if token:
+        result = service.reject_post(post_id=post_id, token=token)
+    else:
+        result = service.reject_post_without_token(post_id=post_id)
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("error", "Reject failed"))
     return JSONResponse(result)
