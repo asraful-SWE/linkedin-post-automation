@@ -6,19 +6,19 @@ import os
 import random
 import logging
 from datetime import datetime, timedelta, time
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 import asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 import pytz
 
-from database.models import DatabaseManager, Post
+from database.models import DatabaseManager
 from services.topic_engine import TopicEngine
 from services.post_generator import PostGenerator
-from services.linkedin_publisher import LinkedInPublisher
-from services.engagement_engine import EngagementEngine
 from services.comment_responder import CommentResponder
+from services.approval_service import ApprovalService
+from services.email_service import EmailService
 
 
 logger = logging.getLogger(__name__)
@@ -40,8 +40,8 @@ class PostingScheduler:
         # Initialize services
         self.topic_engine = TopicEngine(db_manager)
         self.post_generator = PostGenerator()
-        self.linkedin_publisher = LinkedInPublisher()
-        self.engagement_engine = EngagementEngine(db_manager)
+        self.approval_service = ApprovalService(db_manager)
+        self.email_service = EmailService()
         self.comment_responder = CommentResponder(db_manager)
         
         # Configuration
@@ -232,15 +232,15 @@ class PostingScheduler:
                     logger.info("Too soon since last post, skipping")
                     return
             
-            # Generate and publish post
-            await self._generate_and_publish_post()
+            # Generate post and trigger approval flow
+            await self._generate_and_queue_post_for_approval()
             
             # Small chance for a follow-up post later
             if random.random() < self.double_post_probability and posts_today == 0:
                 # Schedule a follow-up post 3-6 hours later
                 delay_seconds = random.randint(3 * 3600, 6 * 3600)
                 self.scheduler.add_job(
-                    self._generate_and_publish_post,
+                    self._generate_and_queue_post_for_approval,
                     'date',
                     run_date=datetime.now() + timedelta(seconds=delay_seconds),
                     id=f"followup_post_{random.randint(1000, 9999)}"
@@ -250,10 +250,10 @@ class PostingScheduler:
         except Exception as e:
             logger.error(f"Posting job execution failed: {e}")
     
-    async def _generate_and_publish_post(self):
-        """Generate and publish a single text-only post"""
+    async def _generate_and_queue_post_for_approval(self):
+        """Generate a post, store as pending, and send approval email"""
         try:
-            logger.info("Starting post generation and publishing process")
+            logger.info("Starting post generation and approval request process")
             
             # Step 1: Select topic
             topic = self.topic_engine.select_topic()
@@ -262,32 +262,29 @@ class PostingScheduler:
             # Step 2: Generate post content  
             post_content = self.post_generator.generate_post(topic)
             logger.info("Post content generated")
-            
-            # Step 3: Publish to LinkedIn (text-only)
-            linkedin_post_id = self.linkedin_publisher.publish_post(post_content)
-            
-            if linkedin_post_id:
-                # Step 4: Save to database
-                post = Post(
-                    topic=topic,
-                    content=post_content,
-                    linkedin_post_id=linkedin_post_id
-                )
-                
-                post_id = self.db.save_post(post)
-                logger.info(f"Text post published successfully: LinkedIn ID {linkedin_post_id}, DB ID {post_id}")
-                
-                # Update topic performance (if engagement data is available later)
-                # For now, just log the successful post
-                
-                # Add natural delay before next action (anti-bot measure)
-                await asyncio.sleep(random.randint(30, 120))
-                
+
+            # Step 3: Save pending + token
+            pending_result = self.approval_service.create_pending_post(topic=topic, content=post_content)
+            post_id = pending_result["post_id"]
+            token = pending_result["token"]
+
+            # Step 4: Send email for approval
+            email_sent = self.email_service.send_post_approval_email(
+                post_id=post_id,
+                topic=topic,
+                content=post_content,
+                token=token,
+            )
+            if email_sent:
+                logger.info(f"email sent | post_id={post_id}")
             else:
-                logger.error("Failed to publish post to LinkedIn")
+                logger.warning(f"email send failed | post_id={post_id}")
+
+            # Natural delay between actions
+            await asyncio.sleep(random.randint(5, 20))
             
         except Exception as e:
-            logger.error(f"Post generation and publishing failed: {e}")
+            logger.error(f"Post generation and approval request failed: {e}")
     
     async def _update_analytics_job(self):
         """Update analytics for recent posts"""
@@ -345,7 +342,7 @@ class PostingScheduler:
             logger.error(f"Comment reply check failed: {e}")
     
     def manual_post(self, topic: Optional[str] = None) -> Dict[str, Any]:
-        """Manually trigger a text-only post (for testing)"""
+        """Manually generate post and trigger approval flow"""
         try:
             if topic:
                 # Use provided topic
@@ -356,31 +353,26 @@ class PostingScheduler:
             
             # Generate post content 
             post_content = self.post_generator.generate_post(selected_topic)
-            
-            # Publish text-only post
-            linkedin_post_id = self.linkedin_publisher.publish_post(post_content)
-            
-            if linkedin_post_id:
-                # Save to database
-                post = Post(
-                    topic=selected_topic,
-                    content=post_content,
-                    linkedin_post_id=linkedin_post_id
-                )
-                
-                post_id = self.db.save_post(post)
-                
-                return {
-                    "success": True,
-                    "post_id": post_id,
-                    "linkedin_post_id": linkedin_post_id,
-                    "topic": selected_topic
-                }
-            else:
-                return {
-                    "success": False,
-                    "error": "Failed to publish to LinkedIn"
-                }
+
+            pending_result = self.approval_service.create_pending_post(topic=selected_topic, content=post_content)
+            post_id = pending_result["post_id"]
+            token = pending_result["token"]
+
+            email_sent = self.email_service.send_post_approval_email(
+                post_id=post_id,
+                topic=selected_topic,
+                content=post_content,
+                token=token,
+            )
+
+            return {
+                "success": True,
+                "post_id": post_id,
+                "topic": selected_topic,
+                "status": "pending",
+                "email_sent": email_sent,
+                "message": "Post generated and sent for approval",
+            }
                 
         except Exception as e:
             logger.error(f"Manual post failed: {e}")

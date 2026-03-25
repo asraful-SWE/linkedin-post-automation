@@ -3,7 +3,7 @@ import random
 import logging
 from dotenv import load_dotenv
 from openai import OpenAI
-from services.topics import ALL_TOPICS, get_random_topic
+from services.topics import get_random_topic
 
 load_dotenv()
 

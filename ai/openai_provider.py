@@ -4,7 +4,7 @@ OpenAI Provider - Enhanced version for LinkedIn Auto Poster
 
 import os
 import logging
-from typing import Dict, Any, Optional
+from typing import Optional
 from openai import OpenAI
 from dotenv import load_dotenv
 

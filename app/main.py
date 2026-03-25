@@ -8,8 +8,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Response
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
 
@@ -21,6 +21,7 @@ from services.engagement_engine import EngagementEngine
 from services.linkedin_publisher import LinkedInPublisher
 from services.comment_responder import CommentResponder
 from utils.logger import setup_logging
+from routes.approval_routes import router as approval_router
 
 
 # Setup logging
@@ -40,10 +41,12 @@ async def lifespan(app: FastAPI):
     try:
         # Initialize database
         db_manager = DatabaseManager()
+        app.state.db_manager = db_manager
         logger.info("Database initialized")
         
         # Initialize and start scheduler
         scheduler = PostingScheduler(db_manager)
+        app.state.scheduler = scheduler
         
         # Only start automatic scheduling if enabled
         if os.getenv("AUTO_SCHEDULE_ENABLED", "true").lower() == "true":
@@ -72,6 +75,10 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+app.include_router(approval_router)
+os.makedirs("uploads", exist_ok=True)
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
 
 # Pydantic models for API
 class PostRequest(BaseModel):
@@ -91,6 +98,8 @@ class PostResponse(BaseModel):
     post_id: Optional[int] = None
     linkedin_post_id: Optional[str] = None
     topic: Optional[str] = None
+    status: Optional[str] = None
+    email_sent: Optional[bool] = None
     error: Optional[str] = None
 
 
@@ -150,10 +159,10 @@ async def get_dashboard():
         raise HTTPException(status_code=500, detail="Dashboard unavailable")
 
 
-# Manual posting endpoint
-@app.post("/post/manual", response_model=PostResponse)
-async def manual_post(request: PostRequest):
-    """Manually trigger a post"""
+# Manual generation endpoint
+@app.post("/generate-post", response_model=PostResponse)
+async def generate_post_for_approval(request: PostRequest):
+    """Generate a post, send approval email, and wait for approval"""
     try:
         if not scheduler:
             raise HTTPException(status_code=500, detail="Scheduler not initialized")
@@ -163,15 +172,16 @@ async def manual_post(request: PostRequest):
         if result.get("success"):
             return PostResponse(
                 success=True,
-                message="Text post published successfully",
+                message=result.get("message", "Post generated and sent for approval"),
                 post_id=result.get("post_id"),
-                linkedin_post_id=result.get("linkedin_post_id"),
-                topic=result.get("topic")
+                topic=result.get("topic"),
+                status=result.get("status"),
+                email_sent=result.get("email_sent"),
             )
         else:
             return PostResponse(
                 success=False,
-                message="Post publication failed",
+                message="Post generation failed",
                 error=result.get("error")
             )
             
@@ -182,6 +192,12 @@ async def manual_post(request: PostRequest):
             message="Internal server error",
             error=str(e)
         )
+
+
+@app.post("/post/manual", response_model=PostResponse)
+async def manual_post_compat(request: PostRequest):
+    """Backward-compatible route mapped to approval workflow"""
+    return await generate_post_for_approval(request)
 
 
 # Analytics update endpoint

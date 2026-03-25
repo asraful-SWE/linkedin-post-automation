@@ -4,10 +4,9 @@ Topic Engine - Intelligently selects topics for text-only LinkedIn posts
 
 import random
 import logging
-from datetime import datetime, timedelta
-from typing import List, Dict, Optional
-from database.models import DatabaseManager, TopicPerformance
-from services.topics import ALL_TOPICS, TOPIC_CATEGORIES, get_random_topic, get_topic_count
+from typing import List, Dict, Any
+from database.models import DatabaseManager
+from services.topics import ALL_TOPICS, TOPIC_CATEGORIES, get_topic_count
 
 
 logger = logging.getLogger(__name__)
@@ -114,45 +113,7 @@ class TopicEngine:
             # Fallback to random topic
             return random.choice(self.TOPICS)
     
-    def update_topic_performance(self, topic: str, engagement_score: float):
-        """
-        Update topic performance and adjust weights
-        
-        Args:
-            topic: Topic that was posted
-            engagement_score: Calculated engagement score
-        """
-        try:
-            if topic not in self.TOPICS:
-                logger.warning(f"Unknown topic for performance update: {topic}")
-                return
-            
-            # Update performance in database (this will be handled by the database manager)
-            # For now, just update local weights
-            
-            # Get current performance data
-            performance_data = self.db.get_topic_performance()
-            topic_performance = next((p for p in performance_data if p.topic == topic), None)
-            
-            if topic_performance:
-                # Calculate running average
-                total_posts = topic_performance.total_posts
-                old_total = topic_performance.avg_engagement * total_posts
-                new_total = old_total + engagement_score
-                new_average = new_total / (total_posts + 1)
-                
-                # Update weight based on new performance
-                overall_avg = sum(p.avg_engagement for p in performance_data) / len(performance_data)
-                if overall_avg > 0:
-                    new_weight = max(0.5, min(3.0, new_average / overall_avg))
-                    self.topic_weights[topic] = new_weight
-                    
-                logger.info(f"Updated performance for topic '{topic}': score={engagement_score:.2f}, new_weight={new_weight:.2f}")
-            
-        except Exception as e:
-            logger.error(f"Failed to update topic performance: {e}")
-    
-    def get_topic_stats(self) -> Dict[str, any]:
+    def get_topic_stats(self) -> Dict[str, Any]:
         """
         Get statistics about topic usage and performance
         
@@ -185,36 +146,6 @@ class TopicEngine:
             logger.error(f"Failed to get topic stats: {e}")
             return {"error": str(e)}
     
-    def get_next_recommended_topics(self, count: int = 3) -> List[str]:
-        """
-        Get next recommended topics without selecting them
-        
-        Args:
-            count: Number of topic recommendations to return
-            
-        Returns:
-            List of recommended topic strings
-        """
-        try:
-            recent_topics = set(self.db.get_recent_topics(days=3))
-            available_topics = [topic for topic in self.TOPICS if topic not in recent_topics]
-            
-            if not available_topics:
-                available_topics = self.TOPICS.copy()
-            
-            # Sort by weight (descending)
-            sorted_topics = sorted(
-                available_topics, 
-                key=lambda t: self.topic_weights.get(t, 1.0), 
-                reverse=True
-            )
-            
-            return sorted_topics[:count]
-            
-        except Exception as e:
-            logger.error(f"Failed to get recommended topics: {e}")
-            return self.TOPICS[:count]
-    
     def update_topic_performance(self):
         """
         Update topic weights based on latest performance data
@@ -246,7 +177,7 @@ class TopicEngine:
         except Exception as e:
             logger.error(f"Failed to update topic performance: {e}")
     
-    def get_topic_insights(self) -> Dict[str, any]:
+    def get_topic_insights(self) -> Dict[str, Any]:
         """Get insights about topic performance and usage"""
         try:
             performance_data = self.db.get_topic_performance()

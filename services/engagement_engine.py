@@ -3,7 +3,7 @@ Engagement Engine - Tracks and learns from post performance
 """
 
 import logging
-from datetime import datetime, timedelta
+import sqlite3
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 from database.models import DatabaseManager
@@ -87,14 +87,17 @@ class EngagementEngine:
             
             for topic_perf in performance_data:
                 # Get detailed post data for this topic
-                with self.db.db.cursor() as cursor:
-                    cursor.execute("""
-                        SELECT p.id, p.engagement_score, p.created_at
-                        FROM posts p
-                        WHERE p.topic = ?
-                        ORDER BY p.created_at DESC
-                    """, (topic_perf.topic,))
-                    
+                with sqlite3.connect(self.db.db_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        """
+                        SELECT id, engagement_score, created_at
+                        FROM posts
+                        WHERE topic = ?
+                        ORDER BY created_at DESC
+                        """,
+                        (topic_perf.topic,),
+                    )
                     posts = cursor.fetchall()
                     
                 if not posts:

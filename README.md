@@ -80,8 +80,8 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 # Test post generation (without publishing)
 curl http://localhost:8000/debug/generate-post?topic=Programming
 
-# Manual post (publishes to LinkedIn)
-curl -X POST http://localhost:8000/post/manual \
+# Manual generate (creates pending post + sends approval email)
+curl -X POST http://localhost:8000/generate-post \
   -H "Content-Type: application/json" \
   -d '{"topic": "Programming"}'
 
@@ -97,7 +97,11 @@ curl http://localhost:8000/health
 - `GET /dashboard` - Complete analytics dashboard
 
 ### Posting
-- `POST /post/manual` - Manually trigger a post
+- `POST /generate-post` - Generate a post and send approval email
+- `POST /post/manual` - Backward-compatible alias for approval flow
+- `GET /approve-post/{post_id}?token=...` - Approve and publish
+- `GET /reject-post/{post_id}?token=...` - Reject and stop publishing
+- `GET /approval-form/{post_id}?token=...` - Optional image URL/upload before approve
 - `POST /analytics/update` - Update engagement data
 
 ### Topic Management
@@ -114,6 +118,22 @@ curl http://localhost:8000/health
 - `GET /analytics/predict?topic=X` - Performance prediction
 
 ## ⚙️ Configuration
+
+### Approval and Email
+```env
+BASE_URL=http://localhost:8000
+APPROVAL_SECRET=change-this-to-a-long-random-secret
+APPROVAL_TOKEN_EXPIRES_HOURS=24
+
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your_smtp_username
+SMTP_PASSWORD=your_smtp_password
+SMTP_USE_TLS=true
+
+EMAIL_FROM=noreply@example.com
+APPROVAL_EMAIL_TO=approver@example.com
+```
 
 ### Posting Schedule
 ```env

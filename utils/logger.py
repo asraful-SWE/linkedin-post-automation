@@ -5,7 +5,6 @@ Enhanced logging configuration for LinkedIn Auto Poster
 import logging
 import os
 import sys
-from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
 
