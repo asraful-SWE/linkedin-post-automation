@@ -1,1 +1,1 @@
-# App module for LinkedIn Auto Poster
+"""LinkedIn AI Poster - App package."""

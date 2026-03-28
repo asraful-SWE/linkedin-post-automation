@@ -2,10 +2,16 @@
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 pydantic==2.4.2
+pydantic-settings==2.0.3
 
 # Scheduling
 apscheduler==3.10.4
 pytz==2023.3
+
+# Celery - background task queue
+celery[redis]==5.3.6
+redis==5.0.1
+kombu==5.3.4
 
 # HTTP requests and API calls
 requests==2.31.0

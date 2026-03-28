@@ -1,1 +1,1 @@
-# Utils module for LinkedIn Auto Poster
+"""Utility modules for LinkedIn AI Poster."""

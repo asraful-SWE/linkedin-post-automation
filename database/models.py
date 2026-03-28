@@ -2,15 +2,14 @@
 Database models for LinkedIn Auto Poster
 """
 
-import os
-import sqlite3
 import hashlib
-import secrets
-from datetime import datetime
-from typing import Optional, List, Dict, Any
-from dataclasses import dataclass
 import logging
-
+import os
+import secrets
+import sqlite3
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +45,7 @@ class TopicPerformance:
 
 
 class DatabaseManager:
-    def __init__(self, db_path: str = None):
+    def __init__(self, db_path: Optional[str] = None):
         if db_path is None:
             db_path = os.getenv("DATABASE_PATH", "linkedin_ai_poster.db")
             # On Railway, use /data volume for persistence if available
@@ -61,7 +60,7 @@ class DatabaseManager:
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                
+
                 # Posts table
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS posts (
@@ -75,22 +74,26 @@ class DatabaseManager:
                         engagement_score REAL DEFAULT 0.0
                     )
                 """)
-                
+
                 # Check if topic column exists, if not add it (for legacy databases)
                 cursor.execute("PRAGMA table_info(posts)")
                 columns = [column[1] for column in cursor.fetchall()]
-                if 'topic' not in columns:
+                if "topic" not in columns:
                     logger.info("Adding missing 'topic' column to posts table")
-                    cursor.execute("ALTER TABLE posts ADD COLUMN topic TEXT DEFAULT 'General'")
+                    cursor.execute(
+                        "ALTER TABLE posts ADD COLUMN topic TEXT DEFAULT 'General'"
+                    )
 
-                if 'status' not in columns:
+                if "status" not in columns:
                     logger.info("Adding missing 'status' column to posts table")
-                    cursor.execute("ALTER TABLE posts ADD COLUMN status TEXT DEFAULT 'pending'")
+                    cursor.execute(
+                        "ALTER TABLE posts ADD COLUMN status TEXT DEFAULT 'pending'"
+                    )
 
-                if 'image_url' not in columns:
+                if "image_url" not in columns:
                     logger.info("Adding missing 'image_url' column to posts table")
                     cursor.execute("ALTER TABLE posts ADD COLUMN image_url TEXT")
-                
+
                 # Analytics table
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS analytics (
@@ -102,7 +105,7 @@ class DatabaseManager:
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
-                
+
                 # Topic performance tracking
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS topic_performance (
@@ -111,17 +114,6 @@ class DatabaseManager:
                         total_engagement REAL DEFAULT 0.0,
                         avg_engagement REAL DEFAULT 0.0,
                         last_used TIMESTAMP
-                    )
-                """)
-
-                # Replied comments tracking (to avoid double-replying)
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS replied_comments (
-                        comment_id TEXT PRIMARY KEY,
-                        post_id TEXT NOT NULL,
-                        comment_text TEXT,
-                        reply_text TEXT,
-                        replied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
 
@@ -134,10 +126,10 @@ class DatabaseManager:
                         FOREIGN KEY(post_id) REFERENCES posts(id)
                     )
                 """)
-                
+
                 conn.commit()
                 logger.info("Database initialized successfully")
-                
+
         except Exception as e:
             logger.error(f"Database initialization failed: {e}")
             raise
@@ -160,46 +152,56 @@ class DatabaseManager:
                         post.linkedin_post_id,
                     ),
                 )
-                
+
                 post_id = cursor.lastrowid
-                
+
                 # Initialize analytics record
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO analytics (post_id) VALUES (?)
-                """, (post_id,))
-                
+                """,
+                    (post_id,),
+                )
+
                 conn.commit()
                 logger.info(f"Post saved with ID: {post_id}")
-                return post_id
-                
+                return post_id or 0
+
         except Exception as e:
             logger.error(f"Failed to save post: {e}")
             raise
 
-    def update_analytics(self, post_id: int, likes: int = 0, comments: int = 0, 
-                        impressions: int = 0):
+    def update_analytics(
+        self, post_id: int, likes: int = 0, comments: int = 0, impressions: int = 0
+    ):
         """Update analytics for a post"""
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                
+
                 # Update analytics
-                cursor.execute("""
-                    UPDATE analytics 
-                    SET likes = ?, comments = ?, impressions = ?, 
+                cursor.execute(
+                    """
+                    UPDATE analytics
+                    SET likes = ?, comments = ?, impressions = ?,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE post_id = ?
-                """, (likes, comments, impressions, post_id))
-                
+                """,
+                    (likes, comments, impressions, post_id),
+                )
+
                 # Calculate and update engagement score
                 engagement_score = likes + (comments * 3)
-                cursor.execute("""
+                cursor.execute(
+                    """
                     UPDATE posts SET engagement_score = ? WHERE id = ?
-                """, (engagement_score, post_id))
-                
+                """,
+                    (engagement_score, post_id),
+                )
+
                 conn.commit()
                 logger.info(f"Analytics updated for post {post_id}")
-                
+
         except Exception as e:
             logger.error(f"Failed to update analytics: {e}")
 
@@ -209,27 +211,31 @@ class DatabaseManager:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    SELECT 
+                    SELECT
                         topic,
                         COUNT(*) as total_posts,
                         AVG(engagement_score) as avg_engagement,
                         MAX(created_at) as last_used
-                    FROM posts 
+                    FROM posts
                     GROUP BY topic
                     ORDER BY avg_engagement DESC
                 """)
-                
+
                 results = []
                 for row in cursor.fetchall():
-                    results.append(TopicPerformance(
-                        topic=row[0],
-                        total_posts=row[1],
-                        avg_engagement=row[2] or 0.0,
-                        last_used=datetime.fromisoformat(row[3]) if row[3] else None
-                    ))
-                
+                    results.append(
+                        TopicPerformance(
+                            topic=row[0],
+                            total_posts=row[1],
+                            avg_engagement=row[2] or 0.0,
+                            last_used=datetime.fromisoformat(row[3])
+                            if row[3]
+                            else None,
+                        )
+                    )
+
                 return results
-                
+
         except Exception as e:
             logger.error(f"Failed to get topic performance: {e}")
             return []
@@ -239,14 +245,17 @@ class DatabaseManager:
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT DISTINCT topic 
-                    FROM posts 
+                cursor.execute(
+                    """
+                    SELECT DISTINCT topic
+                    FROM posts
                     WHERE created_at > datetime('now', ? || ' days')
-                """, (f"-{days}",))
-                
+                """,
+                    (f"-{days}",),
+                )
+
                 return [row[0] for row in cursor.fetchall()]
-                
+
         except Exception as e:
             logger.error(f"Failed to get recent topics: {e}")
             return []
@@ -257,13 +266,13 @@ class DatabaseManager:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    SELECT COUNT(*) 
-                    FROM posts 
+                    SELECT COUNT(*)
+                    FROM posts
                     WHERE date(created_at) = date('now')
                 """)
-                
+
                 return cursor.fetchone()[0]
-                
+
         except Exception as e:
             logger.error(f"Failed to get today's post count: {e}")
             return 0
@@ -274,17 +283,17 @@ class DatabaseManager:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    SELECT created_at 
-                    FROM posts 
-                    ORDER BY created_at DESC 
+                    SELECT created_at
+                    FROM posts
+                    ORDER BY created_at DESC
                     LIMIT 1
                 """)
-                
+
                 result = cursor.fetchone()
                 if result:
                     return datetime.fromisoformat(result[0])
                 return None
-                
+
         except Exception as e:
             logger.error(f"Failed to get last post time: {e}")
             return None
@@ -294,47 +303,30 @@ class DatabaseManager:
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                
+
                 # Delete old posts and their analytics
-                cursor.execute("""
-                    DELETE FROM analytics 
+                cursor.execute(
+                    """
+                    DELETE FROM analytics
                     WHERE post_id IN (
-                        SELECT id FROM posts 
+                        SELECT id FROM posts
                         WHERE created_at < datetime('now', '-{} days')
                     )
-                """.format(days))
-                
-                cursor.execute("""
-                    DELETE FROM posts 
+                """.format(days)
+                )
+
+                cursor.execute(
+                    """
+                    DELETE FROM posts
                     WHERE created_at < datetime('now', '-{} days')
-                """.format(days))
-                
+                """.format(days)
+                )
+
                 conn.commit()
                 logger.info(f"Cleaned up data older than {days} days")
-                
+
         except Exception as e:
             logger.error(f"Failed to cleanup old data: {e}")
-
-    def get_tracked_posts(self) -> List[Dict[str, Any]]:
-        """Return all posts that have a LinkedIn post ID (for comment checking)"""
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT id, linkedin_post_id, topic, content
-                    FROM posts
-                    WHERE linkedin_post_id IS NOT NULL
-                    ORDER BY created_at DESC
-                    LIMIT 50
-                """)
-                return [
-                    {"db_id": row[0], "linkedin_post_id": row[1],
-                     "topic": row[2], "content": row[3]}
-                    for row in cursor.fetchall()
-                ]
-        except Exception as e:
-            logger.error(f"Failed to get tracked posts: {e}")
-            return []
 
     def list_posts(self, status: Optional[str] = None) -> List[Dict[str, Any]]:
         """List posts with optional status filter for dashboard UI"""
@@ -411,7 +403,9 @@ class DatabaseManager:
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                cursor.execute("UPDATE posts SET status = ? WHERE id = ?", (status, post_id))
+                cursor.execute(
+                    "UPDATE posts SET status = ? WHERE id = ?", (status, post_id)
+                )
                 conn.commit()
         except Exception as e:
             logger.error(f"Failed to update post status: {e}")
@@ -421,7 +415,9 @@ class DatabaseManager:
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                cursor.execute("UPDATE posts SET image_url = ? WHERE id = ?", (image_url, post_id))
+                cursor.execute(
+                    "UPDATE posts SET image_url = ? WHERE id = ?", (image_url, post_id)
+                )
                 conn.commit()
         except Exception as e:
             logger.error(f"Failed to set image URL for post {post_id}: {e}")
@@ -439,7 +435,9 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Failed to set linkedin_post_id for post {post_id}: {e}")
 
-    def create_approval_token(self, post_id: int, secret_key: str, expires_hours: int = 24) -> str:
+    def create_approval_token(
+        self, post_id: int, secret_key: str, expires_hours: int = 24
+    ) -> str:
         """Create and store a hashed approval token"""
         token = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(f"{token}:{secret_key}".encode("utf-8")).hexdigest()
@@ -461,7 +459,9 @@ class DatabaseManager:
             raise
         return token
 
-    def validate_approval_token(self, post_id: int, token: str, secret_key: str) -> bool:
+    def validate_approval_token(
+        self, post_id: int, token: str, secret_key: str
+    ) -> bool:
         """Validate token hash and expiry"""
         token_hash = hashlib.sha256(f"{token}:{secret_key}".encode("utf-8")).hexdigest()
         try:
@@ -494,33 +494,45 @@ class DatabaseManager:
                 )
                 conn.commit()
         except Exception as e:
-            logger.error(f"Failed to mark approval token as used for post {post_id}: {e}")
+            logger.error(
+                f"Failed to mark approval token as used for post {post_id}: {e}"
+            )
 
-    def is_comment_replied(self, comment_id: str) -> bool:
-        """Check if we have already replied to this comment"""
+    def set_post_meta(
+        self,
+        post_id: int,
+        post_goal: Optional[str] = None,
+        content_score: Optional[float] = None,
+        retry_count: Optional[int] = None,
+    ) -> None:
+        """Update post metadata fields (post_goal, content_score, retry_count).
+        Uses only columns that exist; silently skips missing ones (pre-migration)."""
         try:
+            updates = []
+            params = []
+            if post_goal is not None:
+                updates.append("post_goal = ?")
+                params.append(post_goal)
+            if content_score is not None:
+                updates.append("content_score = ?")
+                params.append(content_score)
+            if retry_count is not None:
+                updates.append("retry_count = ?")
+                params.append(retry_count)
+            if not updates:
+                return
+            params.append(post_id)
+            sql = f"UPDATE posts SET {', '.join(updates)} WHERE id = ?"
             with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT 1 FROM replied_comments WHERE comment_id = ?",
-                    (comment_id,)
-                )
-                return cursor.fetchone() is not None
-        except Exception as e:
-            logger.error(f"Failed to check reply status: {e}")
-            return False
-
-    def mark_comment_replied(self, comment_id: str, post_id: str,
-                              comment_text: str, reply_text: str):
-        """Record that we have replied to a comment"""
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT OR IGNORE INTO replied_comments
-                        (comment_id, post_id, comment_text, reply_text)
-                    VALUES (?, ?, ?, ?)
-                """, (comment_id, post_id, comment_text, reply_text))
+                conn.execute(sql, params)
                 conn.commit()
-        except Exception as e:
-            logger.error(f"Failed to mark comment as replied: {e}")
+            logger.info(
+                f"set_post_meta | post_id={post_id} | fields={list(zip(['post_goal', 'content_score', 'retry_count'], [post_goal, content_score, retry_count]))}"
+            )
+        except sqlite3.OperationalError as exc:
+            # Column may not exist yet (pre-migration) – log warning, don't crash
+            logger.warning(
+                f"set_post_meta | post_id={post_id} | skipped | reason={exc}"
+            )
+        except Exception as exc:
+            logger.error(f"set_post_meta | post_id={post_id} | error={exc}")
