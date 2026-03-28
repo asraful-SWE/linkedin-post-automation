@@ -624,7 +624,7 @@ class LinkedInPublisherV2:
 
         payload: Dict[str, Any] = {
             "registerUploadRequest": {
-                "recipes": ["urn:li:digitalmediaRecipe:feedShare-image"],
+                "recipes": ["urn:li:digitalmediaRecipe:feedshare-image"],
                 "owner": f"urn:li:person:{self.person_id}",
                 "serviceRelationships": [
                     {

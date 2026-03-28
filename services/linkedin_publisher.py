@@ -195,7 +195,7 @@ class LinkedInPublisher:
             # Step 1: Register the upload with LinkedIn
             register_upload_data = {
                 "registerUploadRequest": {
-                    "recipes": ["urn:li:digitalmediaRecipe:feedShare-image"],
+                    "recipes": ["urn:li:digitalmediaRecipe:feedshare-image"],
                     "owner": f"urn:li:person:{self.person_id}",
                     "serviceRelationships": [
                         {
