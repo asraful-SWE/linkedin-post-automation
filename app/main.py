@@ -92,6 +92,11 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 class PostRequest(BaseModel):
     topic: Optional[str] = None
     goal: Optional[str] = None  # e.g. "educational", "viral", "authority"
+    use_image: Optional[bool] = None
+
+
+class AutoImagesUpdate(BaseModel):
+    enabled: bool
 
 
 class AnalyticsUpdate(BaseModel):
@@ -210,7 +215,11 @@ async def generate_post_for_approval(request: PostRequest):
         if not scheduler:
             raise HTTPException(status_code=500, detail="Scheduler not initialized")
 
-        result = scheduler.manual_post(topic=request.topic, goal=request.goal)
+        result = scheduler.manual_post(
+            topic=request.topic,
+            goal=request.goal,
+            use_image=request.use_image,
+        )
 
         if result.get("success"):
             return PostResponse(
@@ -344,6 +353,45 @@ async def stop_scheduler():
     except Exception as e:
         logger.error(f"Scheduler stop failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to stop scheduler")
+
+
+@app.get("/settings/auto-images", response_model=Dict[str, Any])
+async def get_auto_images_setting():
+    """Get current server-side auto-images runtime setting."""
+    try:
+        if not scheduler:
+            raise HTTPException(status_code=500, detail="Scheduler not initialized")
+
+        return {
+            "enabled": bool(getattr(scheduler, "enable_images", False)),
+            "active": bool(getattr(scheduler, "image_selector", None) is not None),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get auto-images setting failed: {e}")
+        raise HTTPException(status_code=500, detail="Unable to get auto-images setting")
+
+
+@app.post("/settings/auto-images", response_model=Dict[str, Any])
+async def set_auto_images_setting(payload: AutoImagesUpdate):
+    """Enable/disable auto-images at runtime and persist it across restarts."""
+    try:
+        if not scheduler:
+            raise HTTPException(status_code=500, detail="Scheduler not initialized")
+
+        result = scheduler.set_auto_images_enabled(payload.enabled, persist=True)
+        return {
+            "success": True,
+            "enabled": result.get("enabled", False),
+            "active": result.get("active", False),
+            "persisted": result.get("persisted", True),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Set auto-images setting failed: {e}")
+        raise HTTPException(status_code=500, detail="Unable to set auto-images setting")
 
 
 # Analytics and reporting endpoints
@@ -501,7 +549,7 @@ async def _get_system_status() -> Dict[str, Any]:
         intelligent_content = (
             importlib.util.find_spec("modules.content.engine") is not None
         )
-        image_enabled = os.getenv("ENABLE_IMAGES", "false").lower() == "true"
+        image_enabled = bool(scheduler and getattr(scheduler, "enable_images", False))
 
         return {
             "database_connected": bool(db_manager),
@@ -511,6 +559,9 @@ async def _get_system_status() -> Dict[str, Any]:
             "intelligent_topic_engine": intelligent_topic,
             "intelligent_content_engine": intelligent_content,
             "image_auto_selection": image_enabled,
+            "image_auto_selection_active": bool(
+                scheduler and getattr(scheduler, "image_selector", None) is not None
+            ),
             "unsplash_configured": bool(os.getenv("UNSPLASH_ACCESS_KEY")),
             "pexels_configured": bool(os.getenv("PEXELS_API_KEY")),
             "posting_mode": "image_and_text" if image_enabled else "text_only",

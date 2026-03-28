@@ -9,10 +9,12 @@ Upgraded to use:
 """
 
 import asyncio
+import json
 import logging
 import os
 import random
 from datetime import datetime, time, timedelta
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import pytz
@@ -179,23 +181,18 @@ class PostingScheduler:
                 )
                 self.intelligent_content_engine = None
 
-        # --- Image modules ---
+        # --- Image modules + runtime-persistent setting ---
         self.image_selector = None
+        self._runtime_settings_path = Path(
+            os.getenv("RUNTIME_SETTINGS_PATH", "data/runtime_settings.json")
+        )
         self.enable_images = os.getenv("ENABLE_IMAGES", "false").lower() == "true"
-        if (
-            self.enable_images
-            and _IMAGE_MODULES_AVAILABLE
-            and ImageFetcher is not None
-            and ImageSelector is not None
-        ):
-            try:
-                _fetcher = ImageFetcher()  # type: ignore[misc]
-                self.image_selector = ImageSelector(fetcher=_fetcher)  # type: ignore[misc]
-                logger.info("ImageSelector initialised for auto image selection")
-            except Exception as exc:
-                logger.warning(
-                    "ImageSelector init failed: %s – image auto-selection disabled", exc
-                )
+
+        runtime_enable_images = self._load_runtime_enable_images()
+        if runtime_enable_images is not None:
+            self.enable_images = runtime_enable_images
+
+        self._refresh_image_selector()
 
         # --- APScheduler ---
         self.scheduler = AsyncIOScheduler()
@@ -216,6 +213,72 @@ class PostingScheduler:
         self.double_post_probability = float(
             os.getenv("DOUBLE_POST_PROBABILITY", "0.05")
         )
+
+    def _load_runtime_enable_images(self) -> Optional[bool]:
+        """Load persisted auto-images state from runtime settings file."""
+        try:
+            if not self._runtime_settings_path.exists():
+                return None
+            raw = self._runtime_settings_path.read_text(encoding="utf-8")
+            data = json.loads(raw)
+            value = data.get("enable_images")
+            if isinstance(value, bool):
+                return value
+            return None
+        except Exception as exc:
+            logger.warning("event=runtime_settings_load_failed|error=%s", exc)
+            return None
+
+    def _save_runtime_enable_images(self, enabled: bool) -> None:
+        """Persist auto-images state to runtime settings file."""
+        try:
+            self._runtime_settings_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {"enable_images": enabled}
+            self._runtime_settings_path.write_text(
+                json.dumps(payload, ensure_ascii=True, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            logger.warning("event=runtime_settings_save_failed|error=%s", exc)
+
+    def _refresh_image_selector(self) -> None:
+        """Create/clear image selector based on current toggle and availability."""
+        self.image_selector = None
+
+        if not self.enable_images:
+            logger.info("event=image_toggle|status=disabled")
+            return
+
+        if (
+            not _IMAGE_MODULES_AVAILABLE
+            or ImageFetcher is None
+            or ImageSelector is None
+        ):
+            logger.warning(
+                "event=image_toggle|status=requested_but_unavailable|reason=modules_missing"
+            )
+            return
+
+        try:
+            _fetcher = ImageFetcher()  # type: ignore[misc]
+            self.image_selector = ImageSelector(fetcher=_fetcher)  # type: ignore[misc]
+            logger.info("event=image_toggle|status=enabled")
+        except Exception as exc:
+            logger.warning("event=image_selector_init_failed|error=%s", exc)
+
+    def set_auto_images_enabled(self, enabled: bool, persist: bool = True) -> Dict[str, Any]:
+        """Enable/disable auto image selection at runtime and optionally persist it."""
+        self.enable_images = bool(enabled)
+        self._refresh_image_selector()
+
+        if persist:
+            self._save_runtime_enable_images(self.enable_images)
+
+        return {
+            "enabled": self.enable_images,
+            "active": self.image_selector is not None,
+            "persisted": persist,
+        }
 
     # ------------------------------------------------------------------
     # Scheduler lifecycle
@@ -533,7 +596,10 @@ class PostingScheduler:
     # ------------------------------------------------------------------
 
     def manual_post(
-        self, topic: Optional[str] = None, goal: Optional[str] = None
+        self,
+        topic: Optional[str] = None,
+        goal: Optional[str] = None,
+        use_image: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """Manually generate post and trigger approval flow (API-triggered)."""
         try:
@@ -546,7 +612,16 @@ class PostingScheduler:
             if not post_content:
                 return {"success": False, "error": "Content generation returned empty"}
 
-            image_url = self._auto_select_image(selected_topic)
+            image_url = None
+            if use_image is None:
+                image_url = self._auto_select_image(selected_topic)
+            elif use_image:
+                if self.image_selector is not None:
+                    image_url = self._auto_select_image(selected_topic)
+                else:
+                    logger.info(
+                        "event=manual_image_override|requested=true|status=unavailable"
+                    )
 
             pending_result = self.approval_service.create_pending_post(
                 topic=selected_topic, content=post_content
@@ -582,6 +657,7 @@ class PostingScheduler:
                 "content_score": content_score,
                 "has_image": bool(image_url),
                 "image_url": image_url,
+                "use_image": use_image,
                 "status": "pending",
                 "email_sent": email_sent,
                 "message": "Post generated and sent for approval",
@@ -618,7 +694,8 @@ class PostingScheduler:
                 "intelligent_topic_engine": self.intelligent_topic_engine is not None,
                 "intelligent_content_engine": self.intelligent_content_engine
                 is not None,
-                "image_auto_selection": self.image_selector is not None,
+                "image_auto_selection": self.enable_images,
+                "image_auto_selection_active": self.image_selector is not None,
             }
         except Exception as exc:
             logger.error("event=scheduler_status_failed|error=%s", exc)
