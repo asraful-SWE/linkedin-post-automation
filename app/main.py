@@ -2,6 +2,7 @@
 Main FastAPI Application - LinkedIn Auto Poster
 """
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -13,6 +14,7 @@ from database.migrations import run_migrations
 from database.models import DatabaseManager
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from routes.admin_routes import router as admin_router
 from routes.analytics_routes import router as analytics_v2_router
@@ -48,6 +50,14 @@ async def lifespan(app: FastAPI):
         # Apply schema migrations (idempotent — safe to run on every startup)
         run_migrations(db_manager.db_path)
         logger.info("Database migrations applied")
+        
+        # Initialize News Bot services
+        try:
+            from news_bot.api.content_routes import init_services as init_news_bot_services
+            init_news_bot_services(db_manager.db_path)
+            logger.info("News Bot services initialized")
+        except ImportError:
+            logger.warning("News Bot services not available")
 
         # Initialize and start scheduler
         scheduler = PostingScheduler(db_manager)
@@ -75,15 +85,38 @@ async def lifespan(app: FastAPI):
 # Initialize FastAPI app
 app = FastAPI(
     title="LinkedIn Auto Poster",
-    description="Automated LinkedIn posting system with AI-generated content",
-    version="1.0.0",
+    description="Automated LinkedIn posting system with AI-generated content and Tech News Bot",
+    version="2.0.0",
     lifespan=lifespan,
+)
+
+# Add CORS middleware for frontend development
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",  # Next.js development
+        "http://127.0.0.1:3000", 
+        "https://web-production-*.up.railway.app",  # Production frontend
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(approval_router)
 app.include_router(admin_router)
 app.include_router(analytics_v2_router)
 app.include_router(image_router)
+
+# News Bot routes (Content Intelligence Engine)
+try:
+    from news_bot.api.content_routes import router as content_router
+    from news_bot.api.content_routes import init_services as init_news_bot_services
+    app.include_router(content_router)
+    logger.info("News Bot routes registered")
+except ImportError as e:
+    logger.warning(f"News Bot routes not available: {e}")
+
 os.makedirs("uploads", exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
@@ -114,6 +147,8 @@ class PostResponse(BaseModel):
     topic: Optional[str] = None
     status: Optional[str] = None
     email_sent: Optional[bool] = None
+    image_url: Optional[str] = None
+    has_image: Optional[bool] = None
     error: Optional[str] = None
 
 
@@ -215,11 +250,16 @@ async def generate_post_for_approval(request: PostRequest):
         if not scheduler:
             raise HTTPException(status_code=500, detail="Scheduler not initialized")
 
-        result = scheduler.manual_post(
-            topic=request.topic,
-            goal=request.goal,
-            use_image=request.use_image,
-        )
+        # Run blocking operation in thread pool to avoid blocking event loop
+        def _generate():
+            return scheduler.manual_post(
+                topic=request.topic,
+                goal=request.goal,
+                use_image=request.use_image,
+            )
+        
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, _generate)
 
         if result.get("success"):
             return PostResponse(
@@ -229,6 +269,8 @@ async def generate_post_for_approval(request: PostRequest):
                 topic=result.get("topic"),
                 status=result.get("status"),
                 email_sent=result.get("email_sent"),
+                image_url=result.get("image_url"),
+                has_image=result.get("has_image"),
             )
         else:
             return PostResponse(

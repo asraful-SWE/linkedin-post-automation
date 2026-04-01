@@ -23,7 +23,6 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from database.models import DatabaseManager
 from services.approval_service import ApprovalService
-from services.email_service import EmailService
 from services.post_generator import PostGenerator
 from services.topic_engine import TopicEngine
 
@@ -127,7 +126,6 @@ class PostingScheduler:
         self.topic_engine = TopicEngine(db_manager)
         self.post_generator = PostGenerator()
         self.approval_service = ApprovalService(db_manager)
-        self.email_service = EmailService()
 
         # --- Intelligent topic engine ---
         if _INTELLIGENT_TOPIC_AVAILABLE and IntelligentTopicEngine is not None:
@@ -376,7 +374,25 @@ class PostingScheduler:
                 id="monthly_cleanup",
                 replace_existing=True,
             )
-            logger.info("event=maintenance_tasks_scheduled")
+            
+            # ===== NEWS BOT JOBS =====
+            # Hourly content fetch (every hour)
+            self.scheduler.add_job(
+                self._news_bot_fetch_content,
+                IntervalTrigger(hours=1),
+                id="news_bot_hourly_fetch",
+                replace_existing=True,
+            )
+            
+            # Daily content cleanup (older than 7 days)
+            self.scheduler.add_job(
+                self._news_bot_cleanup,
+                CronTrigger(hour=5, minute=0, timezone=self.timezone),
+                id="news_bot_daily_cleanup",
+                replace_existing=True,
+            )
+            
+            logger.info("event=maintenance_tasks_scheduled|news_bot=enabled")
         except Exception as exc:
             logger.error("event=schedule_maintenance_failed|error=%s", exc)
 
@@ -479,22 +495,34 @@ class PostingScheduler:
         return content, 0.0
 
     def _auto_select_image(self, topic: str) -> Optional[str]:
-        """Auto-select a relevant image from Unsplash/Pexels if configured."""
-        if not self.enable_images or self.image_selector is None:
-            return None
+        """Auto-select a relevant image from Unsplash/Pexels, with fallback to placeholder."""
         try:
-            image = self.image_selector.get_image_for_topic(topic)  # type: ignore[union-attr]
-            url = image.get("url") if image is not None else None
-            if url and image is not None:
-                logger.info(
-                    "event=image_selected|topic=%s|source=%s|url=%s",
-                    topic,
-                    image.get("source"),
-                    url,
-                )
-            return url
+            # Try API-based image selection first
+            if self.enable_images and self.image_selector is not None:
+                try:
+                    image = self.image_selector.get_image_for_topic(topic)  # type: ignore[union-attr]
+                    url = image.get("url") if image is not None else None
+                    if url and image is not None:
+                        logger.info(
+                            "event=image_selected|topic=%s|source=%s|url=%s",
+                            topic,
+                            image.get("source"),
+                            url,
+                        )
+                        return url
+                except Exception as exc:
+                    logger.warning("event=image_selection_failed|topic=%s|error=%s", topic, exc)
+            
+            # Fallback to beautiful placeholder images using Picsum (random but real photos)
+            # Use Lorem Picsum for better visual placeholders
+            import random
+            pic_id = random.randint(1, 1000)
+            placeholder_url = f"https://picsum.photos/1200/630?random={pic_id}"
+            logger.info("event=placeholder_image_selected|topic=%s|url=%s", topic, placeholder_url)
+            return placeholder_url
+            
         except Exception as exc:
-            logger.warning("event=image_selection_failed|topic=%s|error=%s", topic, exc)
+            logger.error("event=image_selection_error|error=%s", exc)
             return None
 
     async def _generate_and_queue_post_for_approval(self):
@@ -540,22 +568,15 @@ class PostingScheduler:
                     "event=meta_save_failed|post_id=%d|error=%s", post_id, meta_exc
                 )
 
-            # 7. Send approval email
-            email_sent = self.email_service.send_post_approval_email(
-                post_id=post_id,
-                topic=topic,
-                content=post_content,
-                token=token,
-            )
+            # 7. Email sending is disabled
             logger.info(
                 "event=pipeline_complete|post_id=%d|topic=%s|goal=%s|score=%.2f"
-                "|has_image=%s|email_sent=%s",
+                "|has_image=%s|email_sent=false",
                 post_id,
                 topic,
                 goal,
                 content_score,
                 bool(image_url),
-                email_sent,
             )
 
             await asyncio.sleep(random.randint(5, 20))
@@ -592,6 +613,46 @@ class PostingScheduler:
             logger.error("event=monthly_cleanup_failed|error=%s", exc)
 
     # ------------------------------------------------------------------
+    # News Bot jobs
+    # ------------------------------------------------------------------
+    
+    async def _news_bot_fetch_content(self):
+        """Hourly job: fetch and process content from all sources."""
+        try:
+            logger.info("event=news_bot_fetch_start")
+            
+            # Import here to avoid circular imports
+            from news_bot.services.pipeline_service import run_content_pipeline
+            
+            stats = await run_content_pipeline(self.db.db_path)
+            
+            logger.info(
+                "event=news_bot_fetch_complete|collected=%d|stored=%d",
+                stats.get("collected", 0),
+                stats.get("stored", 0),
+            )
+        except ImportError:
+            logger.warning("event=news_bot_unavailable|reason=module_not_found")
+        except Exception as exc:
+            logger.error("event=news_bot_fetch_failed|error=%s", exc, exc_info=True)
+    
+    async def _news_bot_cleanup(self):
+        """Daily job: clean up old content items."""
+        try:
+            logger.info("event=news_bot_cleanup_start")
+            
+            from news_bot.services.content_service import ContentService
+            
+            content_service = ContentService(self.db.db_path)
+            deleted = content_service.cleanup_old(days=7)
+            
+            logger.info("event=news_bot_cleanup_complete|deleted=%d", deleted)
+        except ImportError:
+            logger.warning("event=news_bot_cleanup_unavailable|reason=module_not_found")
+        except Exception as exc:
+            logger.error("event=news_bot_cleanup_failed|error=%s", exc)
+
+    # ------------------------------------------------------------------
     # Manual post (API-triggered)
     # ------------------------------------------------------------------
 
@@ -613,15 +674,12 @@ class PostingScheduler:
                 return {"success": False, "error": "Content generation returned empty"}
 
             image_url = None
-            if use_image is None:
+            if use_image is False:
+                # User explicitly doesn't want images
+                image_url = None
+            else:
+                # Default (None) or explicit True - try to get images
                 image_url = self._auto_select_image(selected_topic)
-            elif use_image:
-                if self.image_selector is not None:
-                    image_url = self._auto_select_image(selected_topic)
-                else:
-                    logger.info(
-                        "event=manual_image_override|requested=true|status=unavailable"
-                    )
 
             pending_result = self.approval_service.create_pending_post(
                 topic=selected_topic, content=post_content
@@ -642,13 +700,7 @@ class PostingScheduler:
                     "event=manual_meta_failed|post_id=%d|error=%s", post_id, meta_exc
                 )
 
-            email_sent = self.email_service.send_post_approval_email(
-                post_id=post_id,
-                topic=selected_topic,
-                content=post_content,
-                token=token,
-            )
-
+            # Email sending is disabled
             return {
                 "success": True,
                 "post_id": post_id,
@@ -659,7 +711,7 @@ class PostingScheduler:
                 "image_url": image_url,
                 "use_image": use_image,
                 "status": "pending",
-                "email_sent": email_sent,
+                "email_sent": False,
                 "message": "Post generated and sent for approval",
             }
 

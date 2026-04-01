@@ -401,40 +401,13 @@ def generate_and_queue_for_approval_task(
         }
 
     # ------------------------------------------------------------------
-    # Step 4 – Send approval email (non-fatal)
+    # Step 4 – Email sending is disabled
     # ------------------------------------------------------------------
     email_sent: bool = False
-    try:
-        from services.email_service import EmailService
-
-        email_service = EmailService()
-        email_sent = email_service.send_post_approval_email(
-            post_id=post_id,
-            topic=topic,
-            content=content,
-            token=token,  # type: ignore[arg-type]
-        )
-
-        if email_sent:
-            logger.info(
-                "task=generate_and_queue_for_approval|post_id=%d|status=email_sent",
-                post_id,
-            )
-        else:
-            logger.warning(
-                "task=generate_and_queue_for_approval|post_id=%d"
-                "|status=email_not_sent|reason=service_returned_false",
-                post_id,
-            )
-
-    except Exception as email_exc:  # noqa: BLE001
-        # Email failure must never abort the pipeline – the post is already saved.
-        logger.error(
-            "task=generate_and_queue_for_approval|post_id=%d"
-            "|status=email_exception|error=%s",
-            post_id,
-            email_exc,
-        )
+    logger.info(
+        "task=generate_and_queue_for_approval|post_id=%d|status=email_skipped|reason=email_disabled",
+        post_id,
+    )
 
     logger.info(
         "task=generate_and_queue_for_approval|topic=%s|post_id=%d"

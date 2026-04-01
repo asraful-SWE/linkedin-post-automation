@@ -471,22 +471,18 @@ def send_email_task(
     token: str,
 ) -> Dict[str, Any]:
     """
-    Deliver a post-approval email for *post_id* in the background.
-
-    The task delegates to :meth:`EmailService.send_post_approval_email` and
-    retries up to 3 times on failure using exponential back-off
-    (300 s → 600 s → 1200 s).
+    Email sending is disabled.
 
     Parameters
     ----------
     post_id:
         Database ID of the post awaiting approval.
     topic:
-        Human-readable topic label shown in the email subject/body.
+        Human-readable topic label.
     content:
-        Full post text to embed in the email.
+        Full post text.
     token:
-        One-time approval token used to generate approve/reject URLs.
+        One-time approval token.
 
     Returns
     -------
@@ -495,68 +491,18 @@ def send_email_task(
     attempt_number: int = self.request.retries + 1
 
     logger.info(
-        "task=send_email|post_id=%d|topic=%s|status=started|attempt=%d",
+        "task=send_email|post_id=%d|topic=%s|status=skipped|reason=email_disabled",
         post_id,
         topic,
-        attempt_number,
     )
 
-    try:
-        from services.email_service import EmailService
-
-        email_service = EmailService()
-
-        if not email_service.is_configured():
-            logger.warning(
-                "task=send_email|post_id=%d|status=not_configured"
-                "|reason=EmailService.is_configured() returned False",
-                post_id,
-            )
-            return {
-                "success": False,
-                "post_id": post_id,
-                "attempt": attempt_number,
-                "error": "Email service is not configured",
-            }
-
-        sent: bool = email_service.send_post_approval_email(
-            post_id=post_id,
-            topic=topic,
-            content=content,
-            token=token,
-        )
-
-        if sent:
-            logger.info(
-                "task=send_email|post_id=%d|topic=%s|attempt=%d|status=completed",
-                post_id,
-                topic,
-                attempt_number,
-            )
-            return {
-                "success": True,
-                "post_id": post_id,
-                "attempt": attempt_number,
-                "error": None,
-            }
-
-        # Service returned False without raising – treat as a soft failure and retry
-        raise RuntimeError(
-            f"send_post_approval_email returned False for post_id={post_id}"
-        )
-
-    except Exception as exc:  # noqa: BLE001
-        countdown: int = 300 * (2**self.request.retries)  # 300, 600, 1200 s
-
-        logger.error(
-            "task=send_email|post_id=%d|topic=%s|attempt=%d"
-            "|status=failed|error=%s|retrying_in=%ds",
-            post_id,
-            topic,
-            attempt_number,
-            exc,
-            countdown,
-        )
+    # Email sending is disabled - return success without sending
+    return {
+        "success": True,
+        "post_id": post_id,
+        "attempt": attempt_number,
+        "error": None,
+    }
 
         # After the final retry exhaustion Celery will mark the task as FAILURE;
         # we still want a structured log entry for observability.
