@@ -1,0 +1,11 @@
+# Procfile - Railway Deployment Configuration
+
+# Backend API Service
+web: python -m app.main
+
+# Telegram Bot Service  
+worker: python start_telegram_bot.py
+
+# Note: You can run both services on Railway:
+# web: for the HTTP API (http://localhost:8000)
+# worker: for the Telegram bot (background job)

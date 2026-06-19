@@ -24,6 +24,10 @@ python-multipart>=0.0.9
 # AI and OpenAI
 openai>=1.3.0
 
+# Telegram Bot Framework
+python-telegram-bot>=20.0
+aiogram>=3.0.0
+
 # Database (SQLite included in Python)
 # sqlite3 is built into Python
 

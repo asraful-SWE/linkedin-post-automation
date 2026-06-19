@@ -316,6 +316,22 @@ async def update_analytics(analytics: AnalyticsUpdate):
 
 
 # Topic management endpoints
+@app.get("/topics", response_model=Dict[str, List[str]])
+async def get_topics(limit: int = 10):
+    """Get available topics for post generation (used by Telegram bot)"""
+    try:
+        if not db_manager:
+            raise HTTPException(status_code=500, detail="Database not initialized")
+
+        topic_engine = TopicEngine(db_manager)
+        topics_list = topic_engine.get_next_recommended_topics(count=limit)
+        return {"topics": topics_list}
+
+    except Exception as e:
+        logger.error(f"Get topics failed: {e}")
+        raise HTTPException(status_code=500, detail="Unable to get topics")
+
+
 @app.get("/topics/insights", response_model=Dict[str, Any])
 async def get_topic_insights():
     """Get topic performance insights"""
