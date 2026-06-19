@@ -1,0 +1,67 @@
+# Launcher scripts
+RUN_ALL.bat
+RUN_ALL_LAUNCHER.txt
+run_all.ps1
+run_all.sh
+start_system.bat
+start_system.sh
+
+# Windows reserved device names
+nul
+con
+prn
+aux
+lpt*
+
+# Dependencies
+node_modules/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+ENV/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+logs/
+*.log
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+dist/
+build/
+.next/
+out/
+
+# Node
+.pnpm-debug.log*
+lerna-debug.log*
+
+# Python
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Misc
+.cache/
+uploads/
